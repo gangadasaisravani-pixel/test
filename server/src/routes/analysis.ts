@@ -305,6 +305,20 @@ Execute a forensic cross-examination across all materials and produce a complete
         refIds.push(fallbackEvidenceId);
       }
 
+      // Ensure date conforms strictly to YYYY-MM-DD or null for PostgreSQL DATE
+      let safeDate: string | null = null;
+      if (ev.date && typeof ev.date === "string" && ev.date.trim() !== "") {
+        const clean = ev.date.trim();
+        if (/^\d{4}-\d{2}-\d{2}$/.test(clean)) {
+          safeDate = clean;
+        } else {
+          const parsed = Date.parse(clean);
+          if (!isNaN(parsed)) {
+            safeDate = new Date(parsed).toISOString().split("T")[0];
+          }
+        }
+      }
+
       await query(
         `INSERT INTO timeline_events (
           id, case_id, event_date, is_date_uncertain, event_title,
@@ -313,7 +327,7 @@ Execute a forensic cross-examination across all materials and produce a complete
         [
           uuidv4(),
           caseId,
-          ev.date || null,
+          safeDate,
           ev.is_date_uncertain,
           ev.title,
           ev.description,

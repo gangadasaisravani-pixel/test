@@ -35,17 +35,24 @@ async function initPgLite() {
 export async function getDbClient() {
   const databaseUrl = process.env.DATABASE_URL;
 
-  if (databaseUrl && databaseUrl.trim() !== "" && !databaseUrl.includes("localhost:5432/claimproof_db")) {
+  const isRealPostgresConn =
+    databaseUrl &&
+    databaseUrl.trim() !== "" &&
+    (databaseUrl.startsWith("postgres://") || databaseUrl.startsWith("postgresql://")) &&
+    !databaseUrl.includes("localhost:5432/claimproof_db");
+
+  if (isRealPostgresConn) {
     if (!pool) {
       pool = new Pool({
         connectionString: databaseUrl,
+        connectionTimeoutMillis: 4000,
         ssl: databaseUrl.includes("supabase") || databaseUrl.includes("neon") ? { rejectUnauthorized: false } : undefined,
       });
     }
     return { type: "pg" as const, client: pool };
   }
 
-  // Use embedded PGlite if no remote URL provided
+  // Use embedded PGlite if no remote URL provided or if databaseUrl is an HTTP URL
   if (!pgliteInstance) {
     await initPgLite();
   }
@@ -53,12 +60,22 @@ export async function getDbClient() {
 }
 
 export async function exec(sql: string): Promise<void> {
-  const db = await getDbClient();
-  if (db.type === "pg") {
-    await db.client.query(sql);
-  } else {
-    // PGlite has exec() specifically for multi-statement DDL scripts
-    await db.client.exec(sql);
+  try {
+    const db = await getDbClient();
+    if (db.type === "pg") {
+      await db.client.query(sql);
+    } else {
+      await db.client.exec(sql);
+    }
+  } catch (err: any) {
+    if (pool && !isPgliteMode) {
+      console.warn("⚠️ Remote PostgreSQL connection failed or timed out. Switching seamlessly to embedded PostgreSQL engine...");
+      pool = null;
+      await initPgLite();
+      await pgliteInstance.exec(sql);
+      return;
+    }
+    throw err;
   }
 }
 
